@@ -1,0 +1,202 @@
+---
+title: "Survival Analysis of Leukemia Relapse"
+author: "David"
+date: "`r Sys.Date()`"
+output: word_document
+---
+
+Leukemia is a blood cancer that develops in the bone marrow or lymphatic system. The condition results from genetic mutations in the blood cell DNA, mostly white blood cells. These mutations cause the cells to grow and divide uncontrollably, leading to an accumulation of abnormal cells in the bone marrow and the blood, which eventually crowds out healthy cells. There are several risk factors associated with Leukemia e.g. family history of Leukemia, genetic conditions like down syndrome, exposure to chemicals like benzene, gasoline and other industrial chemicals, exposure to tobacco smoke, exposure to cancer radiations etc. Leukemia can broadly be classified into chronic Leukemia and acute Leukemia, where chronic Leukemia affects mature blood cells and develops gradually. Acute Leukemia on the other hand, affects immature blood cells and tends to be aggressive (MOFFITT Cancer Center, n.d.).
+
+This study uses the Leukemia Remission dataset, which is one of the cancer-related datasets found in the **OncoDataSets** R package. The study investigates the effectiveness of maintenance therapy (6-mercaptopurine) on Leukemia remission, and how covariates like sex and white blood cell count impact survival.
+
+```{r}
+# Load packages
+suppressMessages(
+  {
+    library(tidyverse)
+    library(survival)
+    library(survivalAnalysis)
+    library(survminer)
+    library(OncoDataSets) # Contains the Leukemia Remission data
+  }
+)
+```
+
+```{r}
+# View the first few observations of Leukemia Remission dataset
+head(LeukemiaRemission_df)
+```
+
+The dataset *LeukemiaRemission_df*, is a data frame containing data on the duration of remission for acute leukemia. Patients were randomly assigned to maintenance therapy with an active antileukemic compound called 6-mercaptopurine (6-MP), or a placebo. The dataset contains the variables sex, white blood cell count (WBC), time to relapse, event status, and treatment group the patients were assigned to.
+
+```{r}
+# View the structure of the dataset
+str(LeukemiaRemission_df)
+```
+
+The data has 42 observations of 5 variables. The variables sex, time to relapse and WBC count are numeric, while event status and treatment groups are factors with two levels each.
+
+```{r}
+## Assess for data quality issues
+
+# Check for missing values
+map_dbl(LeukemiaRemission_df, ~sum(is.na(.)))
+
+# Check for duplicated observations
+sum(duplicated(LeukemiaRemission_df))
+```
+
+There are no missing values in the data, as well as duplicated observations.
+
+```{r}
+# Factor the variable sex
+LeukemiaRemission_df[["sex"]] <- factor(LeukemiaRemission_df[["sex"]], 
+                                        labels = c("female", "male"), 
+                                        levels = c(0,1))
+```
+
+```{r}
+# Generate Summary Statistics for each and every variable
+summary(LeukemiaRemission_df)
+```
+
+Female patients were 22 and male patients were 20. The minimum, median, mean and maximum white blood cell counts were 1.45, 2.80, 2.93 and 5.00 respectively. The median time to relapse was ten and a half weeks. Half of the patients received the maintenance treatment (6-mercaptopurine) while another half received placebo. 30 patients had a relapse while 12 patients were censored.
+
+# Kaplan Meier Model
+
+Kaplan Meier model is a non-parametric model used to analyze time-to-event data. It has no parameter and makes no assumption about the data distribution.
+
+I'll fit two models i.e. one for comparing relapse between treatment groups and another for comparing relapse between males and females.
+
+```{r}
+# Fit a Kaplan Meier model with treatment group as the covariate
+KM1 <- survfit(Surv(time, event == "Relapse") ~ grp, data = LeukemiaRemission_df)
+# Model summary
+summary(KM1)
+```
+
+The number at risk decreases as we move in time. Survival probability also decreases with time.
+
+```{r}
+# Plot Survival Curves
+ggsurvplot(KM1, data = LeukemiaRemission_df, 
+           risk.table = TRUE, pval = TRUE, 
+           surv.median.line = "hv",   
+           legend.labs = c("6-MP", "Placebo"), 
+           risk.table.y.text.col = TRUE,  
+           risk.table.y.text = TRUE, 
+           xlab = "Time in Weeks", 
+           title = "Survival From Leukemia Relapse", 
+           ggtheme = theme_minimal())
+```
+
+The 6-MP treatment was effective (p < .05). Patients who were under the maintenance therapy had higher survival rates. The median survival time for patients who received the 6-MP treatment is 23 weeks, while that of patients who received placebo is 9 weeks.
+
+```{r}
+# Fit another Kaplan Meier model with sex as the covariate
+KM2 <- survfit(Surv(time, event == "Relapse") ~ sex, 
+                data = LeukemiaRemission_df)
+# Model summary
+summary(KM2)
+```
+
+```{r}
+# Plot Survival Curves to compare the survival rates between males and females
+ggsurvplot(KM2, data = LeukemiaRemission_df, 
+           risk.table = TRUE, pval = TRUE, 
+           surv.median.line = "hv",   
+           legend.labs = c("female", "male"), 
+           risk.table.y.text.col = TRUE,  
+           risk.table.y.text = TRUE, 
+           xlab = "Time in Weeks", 
+           ggtheme = theme_minimal())
+```
+
+The survival rates between males and females do not differ significantly (p > .05). The median survival time for both males and females is about 12 weeks. Before reaching the median survival time, females tend to have higher survival rates than males. After the median survival time (12 weeks), males have higher survival rates than females, even though this is not statistically significant.
+
+
+# Cox Proportional Hazard Model
+
+Cox PH model is a semi-parametric model used to model time-to-event data. This model is useful for investigating the association between the survival time and one or more predictor variables (covariates). It provides a way of examining how different covariates influence the hazard rate at a particular point in time. The Cox model is expressed by the hazard function **{h(t)}**, which is given by; 
+
+ * h(t) = h0(t)*exp(β1x1+β2x2+…+βpxp)
+ * The term **h0** is called the baseline hazard. It corresponds to the value of the hazard when all the covariates (xi’s) are at/equal to zero for numeric features (the quantity exp(0) equals 1), or at reference levels for categorical features.
+
+The hazard ratios are given by **exp(βi)**. To summarize the hazard ratios; 
+
+ * HR = 1: No difference in the hazard rates between the groups being compared, or increase/decrease in the values of a numeric covariate does not affect the hazard rate.
+ * HR < 1: Reduction in the hazard i.e. one group has a lower hazard rate than the other group, or increase in the values of a numeric covariate decreases the hazard rate.
+ * HR > 1: Increase in hazard i.e. one group has a higher hazard rate than the other group, or increase in the values of a numeric covariate increases the hazard rate and in-turn reduces the length of survival.
+
+The Cox PH model is popular because it is robust, and the results from using the Cox model will closely approximate the results from the correct parametric model.
+
+## Advantages of Cox PH Model
+
+ * Flexibility - Since the Cox PH model is a semi-parametric model, it allows for flexibility in modeling the baseline hazard function. This makes it suitable for a wide range of survival data, including those where the hazard function is not easily described by a parametric distribution.
+ * The Cox PH model can handle censored data effectively.
+ * The Cox PH model provides easily interpretable hazard ratios, which quantify the effect of covariates on the hazard of experiencing an event.
+ * The Cox PH model can handle time-dependent covariates, allowing researchers to account for changing variables over the course of a study.
+ 
+## Disadvantages of the Cox PH Model
+
+ * The Cox PH model does not provide a direct estimate of the baseline hazard function.
+ * Cox PH model can be sensitive to outliers in the data.
+ * Multicollinearity - If covariates are highly correlated, the Cox PH model can suffer from multicollinearity issues, making it challenging to estimate the independent effects of individual variables accurately.
+ * Proportional Hazards Assumption - The validity of the Cox PH model relies on the assumption that the hazard ratios (relative risks) remain constant over time. This assumption may not hold in all cases, and when it’s violated, it can lead to biased or incorrect results.
+
+Before fitting a Cox PH model, I'll reverse the order in which the levels of treatment group appear so that the new order begins with Placebo. This will make it easy to interpret the results of the Cox PH model.
+
+```{r}
+# Reverse the levels of treatment group to begin with Placebo
+LeukemiaRemission_df <- LeukemiaRemission_df |> 
+  mutate(group = factor(grp, labels = rev(c("6-MP", "Placebo")), 
+                        levels = rev(levels(LeukemiaRemission_df$grp))))
+```
+
+```{r}
+# Fit a Cox PH model, use treatment group, white blood cell count and sex as the covariates
+Cox_model <- coxph(formula = Surv(time, event == "Relapse") ~ group + wbc + sex, 
+                   data = LeukemiaRemission_df)
+# Model summary
+summary(Cox_model)
+```
+
+The overall model is significant (p-values from Likelihood ratio test, Wald test and logrank test are all less than 0.05). The sex covariate is however not significant (p > .05), while 6-MP treatment and white blood cell count are significant (p < .05).
+
+* Holding other covariates constant, the risk of Leukemia relapse for patients who received 6-MP treatment is reduced by a factor of 0.22, or 77.77%.
+* Holding other covariates constant, every unit increase in WBC count induces the hazard of relapse by a factor of 5.376. In other words, increased accumulation of abnormal cells in the bone marrow and the blood crowds out healthy cells, and this increases the hazard of Leukemia relapse.
+
+```{r}
+# Test for the Proportional Hazards Assumption
+cox.zph(Cox_model)
+
+```
+
+The global test is not significant (p > .05), implying that the proportional Hazards assumption holds, even though it only holds for the treatment group and white blood cell count covariates. The assumption does not hold for the sex covariate.
+
+```{r}
+# Fit another Cox PH model, this time omitting the sex covariate
+Cox_Model <- coxph(formula = Surv(time, event == "Relapse") ~ group + wbc, 
+                   data = LeukemiaRemission_df)
+# Model summary
+summary(Cox_Model)
+```
+
+The overall model is significant (p-values from Likelihood ratio test, Wald test and logrank test are all less than 0.05). The covariates 6-MP treatment and WBC count are also highly significant (p < .05).
+
+* Holding the WBC covariate constant, the risk of Leukemia relapse for patients who received 6-MP treatment is reduced by a factor of 0.25, or 74.99%.
+* Holding the treatment group covariate constant, every unit increase in WBC count induces the hazard of Leukemia relapse by a factor of 5.42 (Increased accumulation of abnormal cells in the bone marrow and the blood crowds out healthy cells, thereby increasing the hazard of Leukemia relapse).
+
+
+# References
+
+City of Hope. (2022, May 26). Leukemia causes and risk factors. CancerCenter.com. Retrieved on April 7, 2025, from https://www.cancercenter.com/cancer-types/leukemia/risk-factors
+
+Kassambara, A. (2016, December). Cox proportional hazards model. STHDA. Retrieved on April 7, 2025, from http://www.sthda.com/english/wiki/cox-proportional-hazards-model
+
+Kassambara, A. (2016). survminer: Survival analysis and visualization [GitHub repository]. Retrieved on April 7, 2025, from https://github.com/kassambara/survminer
+
+Kassambara, A. (2016, December). Cox model assumptions. STHDA. Retrieved on April 7, 2025, from http://www.sthda.com/english/wiki/cox-model-assumptions
+
+MOFFITT Cancer Center. (n.d.). Causes of leukemia: Understanding risk factors. Retrieved on April 7, 2025, from https://www.moffitt.org/cancers/leukemia/diagnosis/causes/
+
